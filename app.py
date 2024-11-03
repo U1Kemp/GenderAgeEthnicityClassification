@@ -200,7 +200,7 @@ def plot_results(prediction_result, image):
     for ax in axes:
         for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] +
                      ax.get_xticklabels() + ax.get_yticklabels()):
-            item.set_fontsize(40)
+            item.set_fontsize(50)
 
     # Adjust layout to prevent overlapping titles
     plt.tight_layout()
