@@ -258,9 +258,7 @@ elif selection == 'Model Description':
 
     st.write("The model is trained using the Adam optimization algorithm and the cross-entropy loss function. The Adam optimization algorithm is a type of stochastic gradient descent algorithm that is used to optimize the model's parameters. The cross-entropy loss function is a measure of the difference between the predicted output and the actual output. The model is trained to minimize the cross-entropy loss function, which means that the model is trained to predict the correct output for a given input.")
 
-    st.write("The code for the model is available [here](https://github.com/u1kemp/git checkout main
-    git merge master
-    git push origin main).")
+    st.write("The code for the model is available [here](https://github.com/u1kemp/GenderAgeEthnicityClassification).")
     
 elif selection == 'Author':
     st.header("Author")
