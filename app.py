@@ -9,96 +9,127 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Load the saved model
-# Assuming 'multi_task_inceptionv3.pth' is in the same directory
-model_path = 'multi_task_inceptionv3.pth'
+model_path = 'multi_task_model.pth' # to be updated
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-class CNN(nn.Module):
-    """
-    A multi-task CNN model for age, gender, and ethnicity classification
 
-    Attributes:
-        input_size (int): The size of the input image
-        num_age_classes (int): The number of classes for age classification
-        num_ethnicity_classes (int): The number of classes for ethnicity classification
+class DepthwiseSeparableConv(nn.Module):
     """
-
-    def __init__(self, input_size, num_age_classes, num_ethnicity_classes ):
+    A class implementing a depthwise separable convolutional layer.
+    
+    Depthwise separable convolution is a technique for reducing the number of parameters and computation required for a convolutional layer.
+    It first applies a depthwise convolution (a convolution with a filter that is applied channel-wise) and then a pointwise convolution (a 1x1 convolution).
+    """
+    def __init__(self, in_channels, out_channels, stride=1):
         """
-        Initializes the model
+        Constructor for the DepthwiseSeparableConv class.
+        
+        Args:
+            in_channels (int): The number of input channels.
+            out_channels (int): The number of output channels.
+            stride (int, optional): The stride of the convolution. Defaults to 1.
+        """
+        super(DepthwiseSeparableConv, self).__init__()
+        self.depthwise = nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=stride, padding=1, groups=in_channels, bias=False)
+        # 
+        # The depthwise convolutional layer.
+        
+        # Applies a depthwise convolution with a filter size of 3x3 and a stride of 'stride'.
+        # The number of input and output channels is equal to 'in_channels' and 'groups' is set to 'in_channels' to apply the convolution channel-wise.
+        # 
+        self.pointwise = nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
+        # 
+        # The pointwise convolutional layer.
+        
+        # Applies a 1x1 convolution to reduce the number of channels to 'out_channels'.
+        # 
+        self.bn = nn.BatchNorm2d(out_channels)
+        # 
+        # The batch normalization layer.
+        
+        # Normalizes the output of the convolutional layer to have zero mean and unit variance.
+        # 
+        self.relu = nn.ReLU(inplace=True)
+        # 
+        # The ReLU activation function.
+        
+        # Applies the ReLU activation function to the output of the batch normalization layer.
+        
+    def forward(self, x):
+        """
+        The forward pass of the DepthwiseSeparableConv layer.
+        
+        Applies the depthwise convolutional layer, the pointwise convolutional layer, the batch normalization layer and the ReLU activation function to the input 'x'.
+        """
+        x = self.depthwise(x)
+        x = self.pointwise(x)
+        x = self.bn(x)
+        return self.relu(x)
+
+
+class LightweightMTLNet224(nn.Module):
+    def __init__(self, num_classes_gender=2, num_classes_age=5, num_classes_ethnicity=7):
+        """
+        Initializes the LightweightMTLNet224 model.
 
         Args:
-            input_size (int): The size of the input image
-            num_age_classes (int): The number of classes for age classification
-            num_ethnicity_classes (int): The number of classes for ethnicity classification
+            num_classes_gender (int): Number of classes for gender classification.
+            num_classes_age (int): Number of classes for age classification.
+            num_classes_ethnicity (int): Number of classes for ethnicity classification.
         """
-        super(CNN, self).__init__()
-        # Convolutional layers
-        self.conv1 = nn.Conv2d(in_channels=3, out_channels=12, kernel_size=3,padding=0)
-        self.conv2 = nn.Conv2d(in_channels=12, out_channels=24, kernel_size=6,padding=0)
-        self.conv3 = nn.Conv2d(in_channels=24, out_channels=32, kernel_size=6,padding=0)
+        super(LightweightMTLNet224, self).__init__()
         
-        # Fully connected layers
-        self.fc1 = nn.Linear(8*4*4, 200)
-        self.fc2 = nn.Linear(200, 10)
+        # Define the depthwise separable convolutional layers
+        # Each layer reduces the spatial dimensions and increases the channel dimension
+        self.conv1 = DepthwiseSeparableConv(3, 32, stride=2)  # Initial layer, outputs 112x112 feature map
+        self.conv2 = DepthwiseSeparableConv(32, 64, stride=2)  # Outputs 56x56 feature map
+        self.conv3 = DepthwiseSeparableConv(64, 128, stride=2) # Outputs 28x28 feature map
+        self.conv4 = DepthwiseSeparableConv(128, 256, stride=2) # Outputs 14x14 feature map
+        self.conv5 = DepthwiseSeparableConv(256, 512, stride=2) # Final convolutional layer, outputs 7x7 feature map
         
-        # Task-specific output layers
-        self.gender_fc = nn.Linear(10, 2)              # Output for gender classification (2 classes)
-        self.age_fc = nn.Linear(10, num_age_classes)   # Output for age classification
-        self.ethnicity_fc = nn.Linear(10, num_ethnicity_classes)  # Output for ethnicity classification
+        # Global average pooling layer to reduce the feature map to a single 1x1 spatial size
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        
+        # Define task-specific fully connected layers for classification
+        # These layers output the final predictions for each task
+        self.gender_fc = nn.Linear(512, num_classes_gender)    # Fully connected layer for gender classification
+        self.age_fc = nn.Linear(512, num_classes_age)          # Fully connected layer for age classification
+        self.ethnicity_fc = nn.Linear(512, num_classes_ethnicity) # Fully connected layer for ethnicity classification
 
-    def forward(self, x, verbose=False):
+    def forward(self, x):
         """
-        Perform a forward pass of the model
+        Defines the forward pass of the model.
 
         Args:
-            x (torch.Tensor): Input tensor
-            verbose (bool): Flag to print intermediate outputs for debugging
+            x (torch.Tensor): Input tensor containing the image data.
 
         Returns:
-            tuple: Outputs for gender, age, and ethnicity classification
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Outputs for gender, age, and ethnicity classification.
         """
-        # Pass through first convolutional layer and ReLU activation
+        # Sequentially pass the input through the convolutional layers
         x = self.conv1(x)
-        x = F.relu(x)
-
-        # Pass through second convolutional layer and ReLU activation
         x = self.conv2(x)
-        x = F.relu(x)
-        
-        # Apply max pooling
-        x = F.max_pool2d(x, kernel_size=2)
-
-        # Pass through third convolutional layer and ReLU activation
         x = self.conv3(x)
-        x = F.relu(x)
-
-        # Apply max pooling
-        x = F.max_pool2d(x, kernel_size=2)
-
-        # Flatten the tensor for fully connected layers
-        x = x.view(-1, 8*4*4)
-
-        # Pass through first fully connected layer and ReLU activation
-        x = self.fc1(x)
-        x = F.relu(x)
-
-        # Pass through second fully connected layer
-        x = self.fc2(x)
-
-        # Task-specific outputs with log softmax activation
-        gender_output = F.log_softmax(self.gender_fc(x), dim=1)
-        age_output = F.log_softmax(self.age_fc(x), dim=1)
-        ethnicity_output = F.log_softmax(self.ethnicity_fc(x), dim=1)
-
-        return gender_output, age_output, ethnicity_output
+        x = self.conv4(x)
+        x = self.conv5(x)
+        
+        # Apply global average pooling to reduce the spatial dimensions
+        x = self.avgpool(x)
+        
+        # Flatten the pooled feature map for the fully connected layers
+        x = torch.flatten(x, 1)
+        
+        # Compute the outputs for each classification task
+        gender = self.gender_fc(x)    # Output for gender classification
+        age = self.age_fc(x)          # Output for age classification
+        ethnicity = self.ethnicity_fc(x) # Output for ethnicity classification
+        
+        # Return the outputs as a tuple
+        return gender, age, ethnicity
 
 
 num_age_classes = 9
 num_ethnicity_classes = 7
-# model = CNN(28 * 28, num_age_classes, num_ethnicity_classes).to(device)  # Replace CNN with your actual model class
-# model.load_state_dict(torch.load(model_path, map_location=device))
-# model.eval()
 
 @st.cache_resource
 def load_model() -> torch.nn.Module:
@@ -109,7 +140,7 @@ def load_model() -> torch.nn.Module:
         A pre-trained CNN model
     """
     # Load the pre-trained model
-    model = CNN(28 * 28, num_age_classes, num_ethnicity_classes).to(device)  
+    model = LightweightMTLNet224(2, num_age_classes, num_ethnicity_classes).to(device)  
 
     # Load the pre-trained weights
     model.load_state_dict(torch.load(model_path, map_location=device))
@@ -122,7 +153,7 @@ def load_model() -> torch.nn.Module:
 model = load_model()
 
 transform = transforms.Compose([
-    transforms.Resize((28, 28)),
+    transforms.Resize((224, 224)),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
@@ -217,13 +248,27 @@ st.sidebar.title('Navigation')
 selection = st.sidebar.radio('',['Gender, Age, Ethnicity Classifier','Model Description','Author'])
 
 if selection == 'Gender, Age, Ethnicity Classifier':
-    st.header("Gender, Age, and Ethnicity Classification")
+    # st.header("Gender, Age, and Ethnicity Classification")
 
     st.header("Instruction")
 
-    st.write("Upload an image to predict gender, age, and ethnicity.")
+    st.write("Upload an image to predict gender, age group, and ethnicity.")
 
-    st.write("This web app is trained on the fairface dataset, which contains images of people with different genders, ages, and ethnicities. The model is trained using the multi-task learning approach. Upload an image to predict its gender, age, and ethnicity. The image should contain only one face and should contain minimal background (similar to a person's photo on a ID card or driver's license). The model will classify the image as either male or female, and the age and ethnicity of the person in the image.")
+    st.write("This web app is trained on the fairface dataset, which contains images of people with different genders, age groups, and ethnicities. The model is trained using the multi-task learning approach. Upload an image to predict its gender, age group, and ethnicity. The image should contain only one face and should contain minimal background (similar to the example images given below). The model will classify the gender, and the age group, and ethnicity of the person in the image.")
+
+    st.subheader("Example Inputs")
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.image("images/image1.png")
+    with col2:
+        st.image("images/image2.png")
+    with col3:
+        st.image("images/image3.png")
+    with col4:
+        st.image("images/image4.png")
+    
+
     st.write("This app is built using Streamlit and PyTorch.")
 
     st.header("Upload Image")
@@ -240,7 +285,7 @@ if selection == 'Gender, Age, Ethnicity Classifier':
 
         st.write(f"**Predicted Labels:**")
         st.write(f"Gender: {gender_label}")
-        st.write(f"Age: {age_label}")
+        st.write(f"Age group: {age_label}")
         st.write(f"Ethnicity: {ethnicity_label}")
 
         st.write("*Probabilities of the predictions:*")
