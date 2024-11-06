@@ -7,10 +7,38 @@ from torchvision import transforms
 from PIL import Image
 import matplotlib.pyplot as plt
 import numpy as np
+import cv2
 
 # Load the saved model
 model_path = 'multi_task_model.pth' # to be updated
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+def detect_face(image):
+    """
+    Detects a face in a given PIL image and returns the face as a PIL image cropped with a square boundary.
+    """
+    # Load the cascade
+    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+    # Convert to OpenCV image
+    img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+    # Detect faces
+    faces = face_cascade.detectMultiScale(img, 1.1, 4)
+    # If a face is detected, crop and return it
+    if len(faces) > 0:
+        # If the detected face occupies more than 70% of the image, return the whole image
+        w, h = image.size
+        if faces[0][2] * faces[0][3] > 0.7 * w * h:
+            return image
+
+        x, y, w, h = faces[0]
+        # Make the boundary square
+        side = max(w, h)
+        x1 = x + (w - side) // 2
+        y1 = y + (h - side) // 2
+        face = image.crop((x1, y1, x1 + side, y1 + side))
+        return face
+    else:
+        return None
 
 
 class DepthwiseSeparableConv(nn.Module):
@@ -272,23 +300,35 @@ if selection == 'Gender, Age, Ethnicity Classifier':
     st.write("This app is built using Streamlit and PyTorch.")
 
     st.header("Upload Image")
-    uploaded_image = st.file_uploader("", type=["jpg", "jpeg", "png"])
+    uploaded_image = st.file_uploader("", type=["jpg", "jpeg", "png","webp"])
 
     if uploaded_image is not None:
+        # image_cv = cv2.imdecode(np.frombuffer(uploaded_image.read(), np.uint8), cv2.IMREAD_COLOR)
         image = Image.open(uploaded_image)
-        prediction_result = predict_proba(model, image, transform, device)
-        st.image(image, caption='Uploaded Image')
+        face_image = detect_face(image)
+
+        if face_image is None:
+            st.write("No face detected in the uploaded image. Please upload another image.")
+            st.stop()
+
+        prediction_result = predict_proba(model, face_image, transform, device)
+
+        st.write("**Uploaded Image**")
+        st.image(image, caption='Uploaded Image',width = 200)
+
+        st.write("**Detected Face**")
+        st.image(face_image, caption='Detected Face',width = 200)
 
         gender_label = label_to_gender[np.argmax(prediction_result['gender_proba'])]
         age_label = label_to_age[np.argmax(prediction_result['age_proba'])]
         ethnicity_label = label_to_ethnicity[np.argmax(prediction_result['ethnicity_proba'])]
 
         st.write(f"**Predicted Labels:**")
-        st.write(f"Gender: {gender_label}")
-        st.write(f"Age group: {age_label}")
-        st.write(f"Ethnicity: {ethnicity_label}")
+        st.write(f"- Gender: {gender_label}")
+        st.write(f"- Age group: {age_label}")
+        st.write(f"- Ethnicity: {ethnicity_label}")
 
-        st.write("*Probabilities of the predictions:*")
+        st.write("**Probabilities of the predictions:**")
         plot_results(prediction_result, image)
         st.pyplot(plt)
 
