@@ -17,27 +17,50 @@ def detect_face(image):
     """
     Detects a face in a given PIL image and returns the face as a PIL image cropped with a square boundary.
     """
-    # Load the cascade
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-    # Convert to OpenCV image
-    img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-    # Detect faces
-    faces = face_cascade.detectMultiScale(img, 1.1, 4)
-    # If a face is detected, crop and return it
-    if len(faces) > 0:
-        # If the detected face occupies more than 70% of the image, return the whole image
-        w, h = image.size
-        if faces[0][2] * faces[0][3] > 0.7 * w * h:
-            return image
 
+    # Step 1: Load the cascade
+    # The cascade is a pre-trained model that contains the patterns for detecting faces.
+    # It is a XML file that contains the features of the face, such as the eyes, nose, mouth, etc.
+    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+
+    # Step 2: Convert the PIL image to an OpenCV image
+    # OpenCV uses BGR color order, whereas PIL uses RGB color order.
+    # Therefore, we need to convert the PIL image to BGR color order.
+    img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+
+    # Step 3: Detect faces in the image
+    # The detectMultiScale function takes in the image, the scale factor and the min neighbors as arguments.
+    # The scale factor determines how much the image is scaled down at each iteration.
+    # The min neighbors determines how many neighbors a face must have to be considered a valid face.
+    faces = face_cascade.detectMultiScale(img, 1.05, 7, flags = cv2.CASCADE_DO_CANNY_PRUNING) 
+
+    # Step 4: If a face is detected, crop and return it
+    # If a face is detected, crop the face from the image and return it as a PIL image.
+    # If the detected face occupies more than 70% of the image, return the whole image.
+    if len(faces) > 0:
+        # Get the width and height of the image
+        w, h = image.size
+
+        # If the detected face occupies more than 70% of the image, return the whole image
+        if faces[0][2] * faces[0][3] >= 0.7 * w * h:
+            return image
+        
+        # elif faces[0][2] * faces[0][3] < 0.1 * w * h:
+        #     return None
+
+        # Otherwise, crop the face from the image
         x, y, w, h = faces[0]
+
         # Make the boundary square
-        side = max(w, h)
+        side = max(w, h)*1.1
         x1 = x + (w - side) // 2
         y1 = y + (h - side) // 2
         face = image.crop((x1, y1, x1 + side, y1 + side))
+
         return face
+
     else:
+        # If no face is detected, return None
         return None
 
 
@@ -96,63 +119,50 @@ class DepthwiseSeparableConv(nn.Module):
 
 
 class LightweightMTLNet224(nn.Module):
-    def __init__(self, num_classes_gender=2, num_classes_age=5, num_classes_ethnicity=7):
-        """
-        Initializes the LightweightMTLNet224 model.
-
-        Args:
-            num_classes_gender (int): Number of classes for gender classification.
-            num_classes_age (int): Number of classes for age classification.
-            num_classes_ethnicity (int): Number of classes for ethnicity classification.
-        """
+    def __init__(self, num_classes_gender=2, num_classes_age=9, num_classes_ethnicity=7):
         super(LightweightMTLNet224, self).__init__()
-        
-        # Define the depthwise separable convolutional layers
-        # Each layer reduces the spatial dimensions and increases the channel dimension
-        self.conv1 = DepthwiseSeparableConv(3, 32, stride=2)  # Initial layer, outputs 112x112 feature map
-        self.conv2 = DepthwiseSeparableConv(32, 64, stride=2)  # Outputs 56x56 feature map
-        self.conv3 = DepthwiseSeparableConv(64, 128, stride=2) # Outputs 28x28 feature map
-        self.conv4 = DepthwiseSeparableConv(128, 256, stride=2) # Outputs 14x14 feature map
-        self.conv5 = DepthwiseSeparableConv(256, 512, stride=2) # Final convolutional layer, outputs 7x7 feature map
-        
-        # Global average pooling layer to reduce the feature map to a single 1x1 spatial size
+
+        # Input layer
+        self.conv1 = DepthwiseSeparableConv(3, 64, stride=2)  
+        self.conv2 = DepthwiseSeparableConv(64, 128, stride=1) 
+        self.conv3 = DepthwiseSeparableConv(128, 128, stride=2)
+        self.conv4 = DepthwiseSeparableConv(128, 256, stride=1) 
+        self.conv5 = DepthwiseSeparableConv(256, 256, stride=2)
+        self.conv6 = DepthwiseSeparableConv(256, 512, stride=1) 
+        self.conv7 = DepthwiseSeparableConv(512, 512, stride=2)
+
+        # Pooling layer
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        
-        # Define task-specific fully connected layers for classification
-        # These layers output the final predictions for each task
-        self.gender_fc = nn.Linear(512, num_classes_gender)    # Fully connected layer for gender classification
-        self.age_fc = nn.Linear(512, num_classes_age)          # Fully connected layer for age classification
-        self.ethnicity_fc = nn.Linear(512, num_classes_ethnicity) # Fully connected layer for ethnicity classification
+
+        # Task-specific classifiers
+        self.fc = nn.Linear(512, 256)
+
+        self.gender_fc = nn.Linear(256, num_classes_gender)
+        self.age_fc = nn.Linear(256, num_classes_age)
+        self.ethnicity_fc = nn.Linear(256, num_classes_ethnicity)
 
     def forward(self, x):
-        """
-        Defines the forward pass of the model.
-
-        Args:
-            x (torch.Tensor): Input tensor containing the image data.
-
-        Returns:
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Outputs for gender, age, and ethnicity classification.
-        """
-        # Sequentially pass the input through the convolutional layers
+        # Pass through the convolutional layers
         x = self.conv1(x)
         x = self.conv2(x)
         x = self.conv3(x)
         x = self.conv4(x)
         x = self.conv5(x)
-        
-        # Apply global average pooling to reduce the spatial dimensions
+        x = self.conv6(x)
+        x = self.conv7(x)
+
+        # Global average pooling
         x = self.avgpool(x)
-        
-        # Flatten the pooled feature map for the fully connected layers
         x = torch.flatten(x, 1)
-        
-        # Compute the outputs for each classification task
-        gender = self.gender_fc(x)    # Output for gender classification
-        age = self.age_fc(x)          # Output for age classification
-        ethnicity = self.ethnicity_fc(x) # Output for ethnicity classification
-        
-        # Return the outputs as a tuple
+
+        # Fully connected layers
+        x = F.relu(self.fc(x),inplace=False) # Added ReLU activation
+
+        # Multi-task outputs
+        gender = self.gender_fc(x)
+        age = self.age_fc(x)
+        ethnicity = self.ethnicity_fc(x)
+
         return gender, age, ethnicity
 
 
@@ -288,19 +298,19 @@ if selection == 'Gender, Age, Ethnicity Classifier':
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.image("images/image1.png")
+        st.image("images/image1.jpg")
     with col2:
-        st.image("images/image2.png")
+        st.image("images/image2.jpg")
     with col3:
-        st.image("images/image3.png")
+        st.image("images/image3.jpg")
     with col4:
-        st.image("images/image4.png")
+        st.image("images/image4.jpg")
     
 
     st.write("This app is built using Streamlit and PyTorch.")
 
     st.header("Upload Image")
-    uploaded_image = st.file_uploader("", type=["jpg", "jpeg", "png","webp"])
+    uploaded_image = st.file_uploader("", type=["jpg", "jpeg","webp"])
 
     if uploaded_image is not None:
         # image_cv = cv2.imdecode(np.frombuffer(uploaded_image.read(), np.uint8), cv2.IMREAD_COLOR)
