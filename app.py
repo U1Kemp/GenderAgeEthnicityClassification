@@ -244,10 +244,7 @@ def plot_results(prediction_result, image):
         None
     """
     fig, axes = plt.subplots(1, 3, figsize=(60, 20))
-    # axes[0].imshow(image)
-    # axes[0].set_title("Image")
-    # axes[0].axis('off')
-
+    
     # Plot gender probability
     labels = ['Male', 'Female']
     axes[0].bar(labels, prediction_result['gender_proba'])
@@ -276,7 +273,6 @@ def plot_results(prediction_result, image):
 
     # Show the plot
     plt.show()
-
 
 # Streamlit app
 st.title("Gender, Age, and Ethnicity Classification")
@@ -323,11 +319,13 @@ if selection == 'Gender, Age, Ethnicity Classifier':
 
         prediction_result = predict_proba(model, face_image, transform, device)
 
-        st.write("**Uploaded Image**")
-        st.image(image, caption='Uploaded Image',width = 200)
-
-        st.write("**Detected Face**")
-        st.image(face_image, caption='Detected Face',width = 200)
+        col1 , col2 = st.columns(2)
+        with col1:
+            st.write("**Uploaded Image**")
+            st.image(image, caption='Uploaded Image',width = 200)
+        with col2:
+            st.write("**Detected Face**")
+            st.image(face_image, caption='Detected Face',width = 200)
 
         gender_label = label_to_gender[np.argmax(prediction_result['gender_proba'])]
         age_label = label_to_age[np.argmax(prediction_result['age_proba'])]
