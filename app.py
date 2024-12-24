@@ -3,14 +3,14 @@ import streamlit as st
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision import transforms
+from torchvision import transforms, models
 from PIL import Image
 import matplotlib.pyplot as plt
 import numpy as np
 import cv2
 
 # Load the saved model
-model_path = 'multi_task_model.pth' # to be updated
+model_path = 'multitask_mobilenet.pth' # to be updated
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def detect_face(image):
@@ -33,26 +33,20 @@ def detect_face(image):
     # The scale factor determines how much the image is scaled down at each iteration.
     # The min neighbors determines how many neighbors a face must have to be considered a valid face.
     faces = face_cascade.detectMultiScale(img, 1.05, 7, flags = cv2.CASCADE_DO_CANNY_PRUNING) 
-
-    # Step 4: If a face is detected, crop and return it
-    # If a face is detected, crop the face from the image and return it as a PIL image.
-    # If the detected face occupies more than 70% of the image, return the whole image.
-    if len(faces) > 0:
-        # Get the width and height of the image
-        w, h = image.size
-
-        # If the detected face occupies more than 70% of the image, return the whole image
-        if faces[0][2] * faces[0][3] >= 0.7 * w * h:
-            return image
         
-        # elif faces[0][2] * faces[0][3] < 0.1 * w * h:
-        #     return None
+    # Step 4: If faces are detected, find the largest face and crop it
+    if len(faces) > 0:
+        # Sort faces by area (width * height) in descending order and select the largest face
+        largest_face = max(faces, key=lambda rect: rect[2] * rect[3])
+        x, y, w, h = largest_face
 
-        # Otherwise, crop the face from the image
-        x, y, w, h = faces[0]
+        # if face occupies more than 75% of the image width or more than 50% of the image height,
+        # then return whole image
+        if w >= 0.9 * img.shape[1] or h >= 0.9 * img.shape[0]:
+            return image
 
         # Make the boundary square
-        side = max(w, h)*1.1
+        side = max(w, h)*0.99
         x1 = x + (w - side) // 2
         y1 = y + (h - side) // 2
         face = image.crop((x1, y1, x1 + side, y1 + side))
@@ -64,107 +58,135 @@ def detect_face(image):
         return None
 
 
-class DepthwiseSeparableConv(nn.Module):
-    """
-    A class implementing a depthwise separable convolutional layer.
+# class DepthwiseSeparableConv(nn.Module):
+#     """
+#     A class implementing a depthwise separable convolutional layer.
     
-    Depthwise separable convolution is a technique for reducing the number of parameters and computation required for a convolutional layer.
-    It first applies a depthwise convolution (a convolution with a filter that is applied channel-wise) and then a pointwise convolution (a 1x1 convolution).
-    """
-    def __init__(self, in_channels, out_channels, stride=1):
-        """
-        Constructor for the DepthwiseSeparableConv class.
+#     Depthwise separable convolution is a technique for reducing the number of parameters and computation required for a convolutional layer.
+#     It first applies a depthwise convolution (a convolution with a filter that is applied channel-wise) and then a pointwise convolution (a 1x1 convolution).
+#     """
+#     def __init__(self, in_channels, out_channels, stride=1):
+#         """
+#         Constructor for the DepthwiseSeparableConv class.
         
-        Args:
-            in_channels (int): The number of input channels.
-            out_channels (int): The number of output channels.
-            stride (int, optional): The stride of the convolution. Defaults to 1.
-        """
-        super(DepthwiseSeparableConv, self).__init__()
-        self.depthwise = nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=stride, padding=1, groups=in_channels, bias=False)
-        # 
-        # The depthwise convolutional layer.
+#         Args:
+#             in_channels (int): The number of input channels.
+#             out_channels (int): The number of output channels.
+#             stride (int, optional): The stride of the convolution. Defaults to 1.
+#         """
+#         super(DepthwiseSeparableConv, self).__init__()
+#         self.depthwise = nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=stride, padding=1, groups=in_channels, bias=False)
+#         # 
+#         # The depthwise convolutional layer.
         
-        # Applies a depthwise convolution with a filter size of 3x3 and a stride of 'stride'.
-        # The number of input and output channels is equal to 'in_channels' and 'groups' is set to 'in_channels' to apply the convolution channel-wise.
-        # 
-        self.pointwise = nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
-        # 
-        # The pointwise convolutional layer.
+#         # Applies a depthwise convolution with a filter size of 3x3 and a stride of 'stride'.
+#         # The number of input and output channels is equal to 'in_channels' and 'groups' is set to 'in_channels' to apply the convolution channel-wise.
+#         # 
+#         self.pointwise = nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
+#         # 
+#         # The pointwise convolutional layer.
         
-        # Applies a 1x1 convolution to reduce the number of channels to 'out_channels'.
-        # 
-        self.bn = nn.BatchNorm2d(out_channels)
-        # 
-        # The batch normalization layer.
+#         # Applies a 1x1 convolution to reduce the number of channels to 'out_channels'.
+#         # 
+#         self.bn = nn.BatchNorm2d(out_channels)
+#         # 
+#         # The batch normalization layer.
         
-        # Normalizes the output of the convolutional layer to have zero mean and unit variance.
-        # 
-        self.relu = nn.ReLU(inplace=True)
-        # 
-        # The ReLU activation function.
+#         # Normalizes the output of the convolutional layer to have zero mean and unit variance.
+#         # 
+#         self.relu = nn.ReLU(inplace=True)
+#         # 
+#         # The ReLU activation function.
         
-        # Applies the ReLU activation function to the output of the batch normalization layer.
+#         # Applies the ReLU activation function to the output of the batch normalization layer.
         
+#     def forward(self, x):
+#         """
+#         The forward pass of the DepthwiseSeparableConv layer.
+        
+#         Applies the depthwise convolutional layer, the pointwise convolutional layer, the batch normalization layer and the ReLU activation function to the input 'x'.
+#         """
+#         x = self.depthwise(x)
+#         x = self.pointwise(x)
+#         x = self.bn(x)
+#         return self.relu(x)
+
+
+# class LightweightMTLNet224(nn.Module):
+#     def __init__(self, num_classes_gender=2, num_classes_age=9, num_classes_ethnicity=7):
+#         super(LightweightMTLNet224, self).__init__()
+
+#         # Input layer
+#         self.conv1 = DepthwiseSeparableConv(3, 64, stride=2)  
+#         self.conv2 = DepthwiseSeparableConv(64, 128, stride=1) 
+#         self.conv3 = DepthwiseSeparableConv(128, 128, stride=2)
+#         self.conv4 = DepthwiseSeparableConv(128, 256, stride=1) 
+#         self.conv5 = DepthwiseSeparableConv(256, 256, stride=2)
+#         self.conv6 = DepthwiseSeparableConv(256, 512, stride=1) 
+#         self.conv7 = DepthwiseSeparableConv(512, 512, stride=2)
+
+#         # Pooling layer
+#         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+
+#         # Task-specific classifiers
+#         self.fc = nn.Linear(512, 256)
+
+#         self.gender_fc = nn.Linear(256, num_classes_gender)
+#         self.age_fc = nn.Linear(256, num_classes_age)
+#         self.ethnicity_fc = nn.Linear(256, num_classes_ethnicity)
+
+#     def forward(self, x):
+#         # Pass through the convolutional layers
+#         x = self.conv1(x)
+#         x = self.conv2(x)
+#         x = self.conv3(x)
+#         x = self.conv4(x)
+#         x = self.conv5(x)
+#         x = self.conv6(x)
+#         x = self.conv7(x)
+
+#         # Global average pooling
+#         x = self.avgpool(x)
+#         x = torch.flatten(x, 1)
+
+#         # Fully connected layers
+#         x = F.relu(self.fc(x),inplace=False) # Added ReLU activation
+
+#         # Multi-task outputs
+#         gender = self.gender_fc(x)
+#         age = self.age_fc(x)
+#         ethnicity = self.ethnicity_fc(x)
+
+#         return gender, age, ethnicity
+
+class MultitaskMobileNet(nn.Module):
+    def __init__(self, num_gender_classes, num_age_classes, num_ethnicity_classes):
+        super(MultitaskMobileNet, self).__init__()
+        # Load pretrained MobileNet
+        self.mobilenet = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT)
+
+        # Remove the last classification layer
+        self.features = self.mobilenet.features
+        self.global_pool = nn.AdaptiveAvgPool2d(1)
+        self.last_channel = self.mobilenet.last_channel
+
+        # Task-specific heads
+        self.gender_head = nn.Linear(self.last_channel, num_gender_classes)
+        self.age_head = nn.Linear(self.last_channel, num_age_classes)
+        self.ethnicity_head = nn.Linear(self.last_channel, num_ethnicity_classes)
+
     def forward(self, x):
-        """
-        The forward pass of the DepthwiseSeparableConv layer.
-        
-        Applies the depthwise convolutional layer, the pointwise convolutional layer, the batch normalization layer and the ReLU activation function to the input 'x'.
-        """
-        x = self.depthwise(x)
-        x = self.pointwise(x)
-        x = self.bn(x)
-        return self.relu(x)
-
-
-class LightweightMTLNet224(nn.Module):
-    def __init__(self, num_classes_gender=2, num_classes_age=9, num_classes_ethnicity=7):
-        super(LightweightMTLNet224, self).__init__()
-
-        # Input layer
-        self.conv1 = DepthwiseSeparableConv(3, 64, stride=2)  
-        self.conv2 = DepthwiseSeparableConv(64, 128, stride=1) 
-        self.conv3 = DepthwiseSeparableConv(128, 128, stride=2)
-        self.conv4 = DepthwiseSeparableConv(128, 256, stride=1) 
-        self.conv5 = DepthwiseSeparableConv(256, 256, stride=2)
-        self.conv6 = DepthwiseSeparableConv(256, 512, stride=1) 
-        self.conv7 = DepthwiseSeparableConv(512, 512, stride=2)
-
-        # Pooling layer
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-
-        # Task-specific classifiers
-        self.fc = nn.Linear(512, 256)
-
-        self.gender_fc = nn.Linear(256, num_classes_gender)
-        self.age_fc = nn.Linear(256, num_classes_age)
-        self.ethnicity_fc = nn.Linear(256, num_classes_ethnicity)
-
-    def forward(self, x):
-        # Pass through the convolutional layers
-        x = self.conv1(x)
-        x = self.conv2(x)
-        x = self.conv3(x)
-        x = self.conv4(x)
-        x = self.conv5(x)
-        x = self.conv6(x)
-        x = self.conv7(x)
-
-        # Global average pooling
-        x = self.avgpool(x)
+        # Shared feature extraction
+        x = self.features(x)
+        x = self.global_pool(x)
         x = torch.flatten(x, 1)
 
-        # Fully connected layers
-        x = F.relu(self.fc(x),inplace=False) # Added ReLU activation
+        # Task-specific outputs
+        gender_out = self.gender_head(x)
+        age_out = self.age_head(x)
+        ethnicity_out = self.ethnicity_head(x)
 
-        # Multi-task outputs
-        gender = self.gender_fc(x)
-        age = self.age_fc(x)
-        ethnicity = self.ethnicity_fc(x)
-
-        return gender, age, ethnicity
-
+        return gender_out, age_out, ethnicity_out
 
 num_age_classes = 9
 num_ethnicity_classes = 7
@@ -178,7 +200,7 @@ def load_model() -> torch.nn.Module:
         A pre-trained CNN model
     """
     # Load the pre-trained model
-    model = LightweightMTLNet224(2, num_age_classes, num_ethnicity_classes).to(device)  
+    model = MultitaskMobileNet(2, num_age_classes, num_ethnicity_classes).to(device)  
 
     # Load the pre-trained weights
     model.load_state_dict(torch.load(model_path, map_location=device))
@@ -271,8 +293,8 @@ def plot_results(prediction_result, image):
     # Adjust layout to prevent overlapping titles
     plt.tight_layout()
 
-    # Show the plot
-    plt.show()
+    # Render in Streamlit
+    st.pyplot(fig)
 
 # Streamlit app
 st.title("Gender, Age, and Ethnicity Classification")
@@ -288,7 +310,7 @@ if selection == 'Gender, Age, Ethnicity Classifier':
 
     st.write("Upload an image to predict gender, age group, and ethnicity.")
 
-    st.write("This web app is trained on the fairface dataset, which contains images of people with different genders, age groups, and ethnicities. The model is trained using the multi-task learning approach. Upload an image to predict its gender, age group, and ethnicity. The image should contain only one face and should contain minimal background (similar to the example images given below). The model will classify the gender, and the age group, and ethnicity of the person in the image.")
+    st.write("Upload an image of a face to predict gender, age group, and ethnicity. The image should contain only one face (similar to the example images below). The model will classify the gender, and the age group, and ethnicity of the person in the image.")
 
     st.subheader("Example Inputs")
 
@@ -338,24 +360,24 @@ if selection == 'Gender, Age, Ethnicity Classifier':
 
         st.write("**Probabilities of the predictions:**")
         plot_results(prediction_result, image)
-        st.pyplot(plt)
+        # st.pyplot(plt)
 
 elif selection == 'Model Description':
     st.header("Model Description")
 
-    st.write("The model is trained using the multi-task learning approach. The model was trained on the fairface dataset, which contains images of people with different genders, ages, and ethnicities.")
+    st.write("The model is trained using a multi-task learning approach to predict gender, age, and ethnicity simultaneously. It is trained on the FairFace dataset, which provides diverse images representing various demographics.")
 
-    st.write("The model is a multi-task learning model, which is a type of deep learning model that is trained on multiple tasks simultaneously. The model is trained on the fairface dataset, which contains images of people with different genders, ages, and ethnicities. The model is trained to predict the gender, age, and ethnicity of the person in the image.")
+    st.write("Built on MobileNet, a lightweight and efficient CNN, the model processes images through multiple layers to extract and refine features. The final layers are specialized for accurate predictions of gender, age, and ethnicity.")
 
-    st.write("The model uses a convolutional neural network (CNN) architecture. The CNN is a type of deep learning model that is used to process images and other two-dimensional data. The CNN is composed of multiple layers, each of which processes the input data in a different way. The layers are composed of multiple filters, which are used to extract features from the input data. The features are then passed on to the next layer, where they are processed further. The output of the final layer is the prediction of the gender, age, and ethnicity of the person in the image.")
+    # st.write("The model is built on MobileNet, a lightweight and efficient CNN. It extracts features through multiple layers, progressively refining them to identify patterns. The final layers are specialized to predict gender, age, and ethnicity.")
 
-    st.write("The model is trained using the Adam optimization algorithm and the cross-entropy loss function. The Adam optimization algorithm is a type of stochastic gradient descent algorithm that is used to optimize the model's parameters. The cross-entropy loss function is a measure of the difference between the predicted output and the actual output. The model is trained to minimize the cross-entropy loss function, which means that the model is trained to predict the correct output for a given input.")
+    # st.write("The model is trained using the Adam optimization algorithm and the cross-entropy loss function. The Adam optimization algorithm is a type of stochastic gradient descent algorithm that is used to optimize the model's parameters. The cross-entropy loss function is a measure of the difference between the predicted output and the actual output. The model is trained to minimize the cross-entropy loss function, which means that the model is trained to predict the correct output for a given input.")
 
     st.write("The code for the model is available [here](https://github.com/u1kemp/GenderAgeEthnicityClassification).")
     
 elif selection == 'Author':
     st.header("Author")
 
-    st.write("This app was built by [Utpalraj Kemprai](https://u1kemp.github.io/index.html) as a personal project on CNN. The code for this app and model is available [here](https://github.com/u1kemp/GenderAgeEthnicityClassification).")
+    st.write("This app was built by [Utpalraj Kemprai](https://u1kemp.github.io/index.html) as a personal project on Multi-task Learning and CNN. The code for this app and model is available [here](https://github.com/u1kemp/GenderAgeEthnicityClassification).")
 
-    st.write("I am free to discuss about academics or research. Feel free to reach out to me through [email](mailto:utplarajkemprai2001@gmail.com), as I keep on checking emails regularly. You can also contact me via LinkedIn.")
+    st.write("I'm always open to discussing topics like data science, machine learning, and deep learning. Feel free to reach out via email, which I check regularly, or connect with me on LinkedIn.")
