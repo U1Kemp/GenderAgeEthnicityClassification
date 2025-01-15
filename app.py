@@ -270,19 +270,23 @@ def plot_results(prediction_result, image):
     # Plot gender probability
     labels = ['Male', 'Female']
     axes[0].bar(labels, prediction_result['gender_proba'])
+    axes[0].tick_params(axis='x', rotation=45) # Rotate x-axis labels
     axes[0].set_title('Gender Probability')
+    axes[0].set_ylim([0, 1])  
 
     # Plot age probability
     labels = ['0-2', '3-9', '10-19', '20-29', '30-39', '40-49', '50-59', '60-69', 'more than 70']
     axes[1].bar(labels, prediction_result['age_proba'])
     axes[1].tick_params(axis='x', rotation=45) # Rotate x-axis labels for better readability
     axes[1].set_title('Age Probability')
+    axes[1].set_ylim([0, 1])
 
     # Plot ethnicity probability
     labels = ['White', 'Black', 'Latino_Hispanic', 'East Asian', 'Southeast Asian', 'Indian', 'Middle Eastern']
     axes[2].bar(labels, prediction_result['ethnicity_proba'])
     axes[2].tick_params(axis='x', rotation=45)  # Rotate x-axis labels
     axes[2].set_title('Ethnicity Probability')
+    axes[2].set_ylim([0, 1])
 
     # Increase font size of x-axis labels
     for ax in axes:
